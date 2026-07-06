@@ -1119,6 +1119,7 @@ document.addEventListener('DOMContentLoaded', function() {
     <!-- TARIFF MIX TAB -->
     <div id="tab-tariff" class="tab-content hidden">
       <div class="section-title"><i class="fas fa-layer-group mr-2"></i>Tariff Mix Analysis</div>
+      <div style="font-size:10px;color:var(--text-muted);margin:-8px 0 10px">اضغط على أي كارت أو جزء من الدائرة عشان تشوف الفروع اللي عاملة الأرقام دي</div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6" id="tariff-kpi-grid"></div>
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <div class="chart-card">
@@ -1130,6 +1131,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <canvas id="chart-tariff-trend" height="220"></canvas>
         </div>
       </div>
+      <div id="tariff-drill" style="margin-bottom:16px"></div>
       <div class="chart-card">
         <div class="chart-title">Stacked Mix by Supervisor</div>
         <canvas id="chart-tariff-stacked" height="160"></canvas>
@@ -1602,7 +1604,8 @@ let filteredData = [];
 let activeTab = 'overview';
 let activeProduct = 'all';
 let activeClass = 'all';
-let selectedStore = '';
+let selectedStore = '';     // storeCode when available (stable key), else the store name as fallback
+let selectedStoreName = ''; // display label for the Clear-selection chip
 let pkgGroupBy = 'store';
 const rankViews = { supervisor: 'top', areamgr: 'top', partner: 'top', store: 'top' };
 
@@ -1787,10 +1790,18 @@ function getProductKeys() {
 }
 
 // ── Store Search ──────────────────────────────────────────────────────────────
-let allStoreOptions = [];
+let allStoreOptions = []; // [{key, label}] — key is storeCode when available (stable across months), else the store name itself
 
 function buildStoreOptions(pool) {
-  allStoreOptions = [...new Set(pool.map(r => r.store).filter(Boolean))].sort();
+  const seen = new Map(); // key -> label
+  pool.forEach(function(r) {
+    if (!r.store) return;
+    const key = r.storeCode || r.store; // storeCode is the stable identifier; name is a fallback for older unmatched rows
+    if (!seen.has(key)) seen.set(key, r.store);
+  });
+  allStoreOptions = [...seen.entries()]
+    .map(function(e){ return { key: e[0], label: e[1] }; })
+    .sort(function(a,b){ return a.label.localeCompare(b.label); });
 }
 
 function showStoreDropdown() {
@@ -1812,25 +1823,26 @@ function filterStoreDropdown() {
 function renderStoreDropdown(query) {
   const list = document.getElementById('store-dropdown-list');
   const q = query.trim().toLowerCase();
-  const matches = q ? allStoreOptions.filter(s => s.toLowerCase().includes(q)) : allStoreOptions;
+  const matches = q ? allStoreOptions.filter(o => o.label.toLowerCase().includes(q)) : allStoreOptions;
 
   let html = selectedStore
-    ? `<div class="store-opt-clear" onclick="clearStoreFilter()">✕ Clear: ${selectedStore.length>30?selectedStore.slice(0,30)+'…':selectedStore}</div>`
+    ? `<div class="store-opt-clear" onclick="clearStoreFilter()">✕ Clear: ${selectedStoreName.length>30?selectedStoreName.slice(0,30)+'…':selectedStoreName}</div>`
     : '';
 
   if (matches.length === 0) {
     html += `<div class="store-no-results">No stores found</div>`;
   } else {
-    html += matches.slice(0, 100).map(s =>
-      `<div class="store-opt ${s===selectedStore?'selected':''}" onclick="selectStore('${s.replace(/'/g,"&#39;")}')">${s}</div>`
+    html += matches.slice(0, 100).map(o =>
+      `<div class="store-opt ${o.key===selectedStore?'selected':''}" onclick="selectStore('${String(o.key).replace(/'/g,"&#39;")}','${o.label.replace(/'/g,"&#39;")}')">${o.label}</div>`
     ).join('');
     if (matches.length > 100) html += `<div class="store-no-results">+${matches.length-100} more — type to narrow</div>`;
   }
   list.innerHTML = html;
 }
 
-function selectStore(name) {
-  selectedStore = name;
+function selectStore(key, name) {
+  selectedStore = key;
+  selectedStoreName = name;
   document.getElementById('store-search-input').value = name;
   const badge = document.getElementById('store-selected-badge');
   badge.textContent = '✓'; badge.style.display = 'inline';
@@ -1840,11 +1852,13 @@ function selectStore(name) {
 
 function clearStoreFilter() {
   selectedStore = '';
+  selectedStoreName = '';
   document.getElementById('store-search-input').value = '';
   document.getElementById('store-selected-badge').style.display = 'none';
   closeStoreDropdown();
   applyFilters();
 }
+
 
 
 function initFilters() {
@@ -1908,7 +1922,7 @@ function applyFilters() {
     (!am || r.areaManager === am) &&
     (!ac || r.accountManager === ac) &&
     (!pt || r.partner === pt) &&
-    (!selectedStore || r.store === selectedStore) &&
+    (!selectedStore || (r.storeCode || r.store) === selectedStore) &&
     (!mo || r.month === mo) &&
     (activeClass === 'all' || r.classification === activeClass)
   );
@@ -1934,6 +1948,7 @@ function applyFilters() {
 function resetFilters() {
   ['f-regMgr','f-supervisor','f-areaMgr','f-accMgr','f-partner','f-month'].forEach(id => document.getElementById(id).value = '');
   selectedStore = '';
+  selectedStoreName = '';
   document.getElementById('store-search-input').value = '';
   document.getElementById('store-selected-badge').style.display = 'none';
   activeProduct = 'all';
@@ -2141,6 +2156,17 @@ function renderAchTrend() {
 }
 
 // ── Tariff Mix ────────────────────────────────────────────────────────────────
+var TARIFF_ACTIVE_TIER = null;
+var TARIFF_DRILL_SHOW_ALL = false;
+var TARIFF_DRILL_PAGE_SIZE = 20;
+var TARIFF_STORE_DATA = { low:[], mid:[], high:[], pt12:[] };
+var TARIFF_TIER_META = {
+  low:  { label:'Low Tier (25, 29, 32, 37)',  color:'#ef4444' },
+  mid:  { label:'Mid Tier (40, 45, 46, 52)',  color:'#eab308' },
+  high: { label:'High Tier (50+)',            color:'#22c55e' },
+  pt12: { label:'12 PT (12-month plan)',      color:'#5E2D91' },
+};
+
 function renderTariffKPIs() {
   const lowT   = sum(filteredData,'lowT');
   const midT   = sum(filteredData,'midT');
@@ -2151,31 +2177,104 @@ function renderTariffKPIs() {
   const el = document.getElementById('tariff-kpi-grid');
   if (!el) return;
   const tiers = [
-    { tier:'Low Tier',  sub:'(25, 29, 32, 37)', vol:lowT,  color:'#ef4444', contrib: total?Math.round(lowT/total*100):0,  extraLabel:'of tariff mix', extraVal:null },
-    { tier:'Mid Tier',  sub:'(40, 45, 46, 52)', vol:midT,  color:'#eab308', contrib: total?Math.round(midT/total*100):0,  extraLabel:'of tariff mix', extraVal:null },
-    { tier:'High Tier', sub:'(50+)',             vol:highT, color:'#22c55e', contrib: total?Math.round(highT/total*100):0, extraLabel:'of tariff mix', extraVal:null },
-    { tier:'12 PT',     sub:'(12-month plan)',   vol:pt12,  color:'#5E2D91', contrib: totalMobile?Math.round(pt12/totalMobile*100):0, extraLabel:'of total Mobile subs', extraVal: totalMobile },
+    { key:'low',  tier:'Low Tier',  sub:'(25, 29, 32, 37)', vol:lowT,  color:'#ef4444', contrib: total?Math.round(lowT/total*100):0,  extraLabel:'of tariff mix', extraVal:null },
+    { key:'mid',  tier:'Mid Tier',  sub:'(40, 45, 46, 52)', vol:midT,  color:'#eab308', contrib: total?Math.round(midT/total*100):0,  extraLabel:'of tariff mix', extraVal:null },
+    { key:'high', tier:'High Tier', sub:'(50+)',             vol:highT, color:'#22c55e', contrib: total?Math.round(highT/total*100):0, extraLabel:'of tariff mix', extraVal:null },
+    { key:'pt12', tier:'12 PT',     sub:'(12-month plan)',   vol:pt12,  color:'#5E2D91', contrib: totalMobile?Math.round(pt12/totalMobile*100):0, extraLabel:'of total Mobile subs', extraVal: totalMobile },
   ];
   el.innerHTML = tiers.map(t => `
-    <div class="tariff-kpi" style="border-top:4px solid ${t.color}">
+    <div class="tariff-kpi" onclick="showTariffTierDrilldown('${t.key}')" style="cursor:pointer;border-top:4px solid ${t.color}">
       <div class="t-tier" style="color:${t.color}">${t.tier}</div>
       <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">${t.sub}</div>
       <div class="t-volume kpi-animated" style="color:${t.color}">${fmtN(t.vol)}</div>
       <div class="t-contrib" style="color:${t.color}">${t.contrib}%</div>
       <div style="font-size:10px;color:var(--text-muted)">${t.extraLabel}</div>
       ${t.extraVal !== null ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">Mobile Total: ${fmtN(t.extraVal)}</div>` : ''}
+      <div style="font-size:9px;color:${t.color};margin-top:6px;font-weight:700">▼ View stores</div>
     </div>`).join('');
+
+  // Build per-store data for the drilldown (uses the same rows already
+  // powering the KPI totals above, so it's always consistent with them).
+  ['low','mid','high','pt12'].forEach(function(key){
+    const fieldMap = { low:'lowT', mid:'midT', high:'highT', pt12:'pt12' };
+    TARIFF_STORE_DATA[key] = filteredData
+      .filter(function(r){ return (Number(r[fieldMap[key]])||0) > 0; })
+      .map(function(r){ return { store:r.store, supervisor:r.supervisor, val:Number(r[fieldMap[key]])||0 }; })
+      .sort(function(a,b){ return b.val - a.val; });
+  });
+
+  if (TARIFF_ACTIVE_TIER) renderTariffTierDrilldownList();
+}
+
+function showTariffTierDrilldown(tierKey) {
+  TARIFF_ACTIVE_TIER = (TARIFF_ACTIVE_TIER === tierKey) ? null : tierKey;
+  TARIFF_DRILL_SHOW_ALL = false;
+  renderTariffTierDrilldownList();
+}
+
+function renderTariffTierDrilldownList() {
+  const el = document.getElementById('tariff-drill');
+  if (!el) return;
+  if (!TARIFF_ACTIVE_TIER) { el.innerHTML = ''; return; }
+
+  const tier = TARIFF_ACTIVE_TIER;
+  const meta = TARIFF_TIER_META[tier];
+  const data = TARIFF_STORE_DATA[tier] || [];
+  const totalCount = data.length;
+  const visible = TARIFF_DRILL_SHOW_ALL ? data : data.slice(0, TARIFF_DRILL_PAGE_SIZE);
+  const hasMore = totalCount > TARIFF_DRILL_PAGE_SIZE;
+  const tierTotal = data.reduce(function(s,x){ return s+x.val; }, 0);
+  const maxVal = data.length ? data[0].val : 0;
+
+  const header = '<div style="display:flex;align-items:center;justify-content:space-between;background:'+meta.color+';color:white;padding:10px 16px;border-radius:12px 12px 0 0">'+
+    '<span style="font-size:12px;font-weight:800"><i class="fas fa-layer-group mr-1"></i>'+meta.label+' — '+fmtN(tierTotal)+' ('+totalCount+' فرع)</span>'+
+    '<span onclick="showTariffTierDrilldown(\''+tier+'\')" style="cursor:pointer;opacity:.85">✕</span>'+
+  '</div>';
+
+  const rows = visible.length === 0
+    ? '<div style="padding:16px;text-align:center;color:#9ca3af;font-size:12px">لا توجد فروع</div>'
+    : visible.map(function(r,i){
+        const bg = i%2===0 ? 'white' : '#fafafa';
+        const barPct = maxVal>0 ? Math.round(r.val/maxVal*100) : 0;
+        return '<div style="display:table;width:100%;background:'+bg+';border-bottom:1px solid #f3f4f6">'+
+          '<div style="display:table-row">'+
+          '<div style="display:table-cell;padding:7px 14px;font-size:11px;color:#9ca3af;width:32px">'+(i+1)+'</div>'+
+          '<div style="display:table-cell;padding:7px 14px;vertical-align:middle">'+
+            '<div style="font-size:11px;font-weight:600;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px" title="'+r.store+'">'+r.store+'</div>'+
+            '<div style="background:#f3f4f6;border-radius:3px;height:4px;margin-top:4px;width:130px"><div style="width:'+barPct+'%;height:100%;background:'+meta.color+';border-radius:3px"></div></div>'+
+          '</div>'+
+          '<div style="display:table-cell;padding:7px 14px;font-size:11px;color:#6b7280;vertical-align:middle;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis">'+(r.supervisor||'')+'</div>'+
+          '<div style="display:table-cell;padding:7px 14px;text-align:center;vertical-align:middle;font-size:15px;font-weight:800;color:'+meta.color+'">'+fmtN(r.val)+'</div>'+
+          '</div></div>';
+      }).join('');
+
+  let pagination = '';
+  if (hasMore) {
+    pagination = '<div style="padding:12px;text-align:center;border-top:1px solid #f3f4f6;background:#fafafa">' +
+      (TARIFF_DRILL_SHOW_ALL
+        ? '<button onclick="TARIFF_DRILL_SHOW_ALL=false;renderTariffTierDrilldownList()" style="padding:6px 18px;border-radius:16px;border:1.5px solid '+meta.color+';background:white;color:'+meta.color+';font-size:11px;font-weight:700;cursor:pointer">Show First '+TARIFF_DRILL_PAGE_SIZE+' Only</button>'
+        : '<span style="font-size:11px;color:#6b7280;margin-right:10px">عرض '+TARIFF_DRILL_PAGE_SIZE+' من '+totalCount+' فرع</span>'+
+          '<button onclick="TARIFF_DRILL_SHOW_ALL=true;renderTariffTierDrilldownList()" style="padding:6px 18px;border-radius:16px;border:1.5px solid '+meta.color+';background:'+meta.color+';color:white;font-size:11px;font-weight:700;cursor:pointer"><i class="fas fa-list mr-1"></i>Show All ('+totalCount+')</button>'
+      )+'</div>';
+  }
+
+  el.innerHTML = '<div style="background:white;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.07);overflow:hidden">'+header+rows+pagination+'</div>';
 }
 
 function renderTariffDonut() {
   const low=sum(filteredData,'lowT'), mid=sum(filteredData,'midT'), high=sum(filteredData,'highT'), pt12=sum(filteredData,'pt12');
   const total = low+mid+high+pt12;
+  const tierKeys = ['low','mid','high','pt12'];
   makeChart('chart-tariff-donut', {
     type:'doughnut',
     data:{ labels:['Low Tier','Mid Tier','High Tier','12 PT'], datasets:[{ data:[low,mid,high,pt12], backgroundColor:['#ef4444','#eab308','#22c55e','#5E2D91'], borderWidth:3, hoverOffset:8 }] },
     options:{ responsive:true, plugins:{
       legend:{ position:'bottom', labels:{color:textColor(),font:{family:'Inter',size:11}} },
       tooltip:{ callbacks:{ label: ctx => ' '+ctx.label+': '+fmtTooltipNum(ctx.parsed)+' ('+(total>0?(ctx.parsed/total*100).toFixed(1):0)+'%)' } }
+    },
+    onClick: function(evt, elements) {
+      if (!elements || !elements.length) return;
+      showTariffTierDrilldown(tierKeys[elements[0].index]);
     }}
   });
 }
