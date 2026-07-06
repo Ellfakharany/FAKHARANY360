@@ -50,6 +50,12 @@ def parse_database_sheet(path):
         if pd.isna(code): continue
         code = norm_code(code)
 
+        # Skip summary/total rows — they have something in the code column
+        # (e.g. "Grand Total") but no real store name, which produced NaN
+        # fields all the way through and broke the JSON output.
+        if pd.isna(r[1]) or 'grand total' in code.lower() or 'total' == code.lower():
+            continue
+
         def num(col):
             v = r[col]
             return 0 if pd.isna(v) else float(v)
@@ -208,7 +214,7 @@ def scan_and_convert(raw_dir, data_dir):
         out_path = os.path.join(data_dir, out_name)
         rows = build_month(pair['mobile'], pair['wallet'], month_str)
         with open(out_path, 'w', encoding='utf-8') as fh:
-            json.dump(rows, fh, ensure_ascii=False)
+            json.dump(sanitize_rows(rows), fh, ensure_ascii=False, allow_nan=False)
         print(f'  ✅ {month_str} → {out_name} ({len(rows)} stores)')
         processed.append(f'{yyyy}-{mm}')
 
@@ -223,6 +229,18 @@ def scan_and_convert(raw_dir, data_dir):
         json.dump({'months': all_months}, fh, ensure_ascii=False, indent=2)
     print(f'  📄 manifest.json updated — {len(all_months)} month(s) total: {all_months}')
     return processed
+
+
+def sanitize_rows(rows):
+    """Belt-and-suspenders: replace any NaN/Infinity that slipped through
+    (e.g. from an unexpected blank cell) with a safe default, so we never
+    write invalid JSON again. Numbers -> 0, strings -> ''."""
+    import math
+    for row in rows:
+        for k, v in list(row.items()):
+            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                row[k] = 0
+    return rows
 
 
 def build_month(mobile_path, wepay_path, month_str):
@@ -273,5 +291,5 @@ if __name__ == '__main__':
         mobile_path, wepay_path, month_str, out_path = sys.argv[1:5]
         rows = build_month(mobile_path, wepay_path, month_str)
         with open(out_path, 'w', encoding='utf-8') as f:
-            json.dump(rows, f, ensure_ascii=False)
+            json.dump(sanitize_rows(rows), f, ensure_ascii=False, allow_nan=False)
         print(f'Wrote {len(rows)} store rows to {out_path}')
