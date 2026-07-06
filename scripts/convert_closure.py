@@ -40,6 +40,15 @@ def classify_tier(n):
 def norm_code(x):
     return str(x).strip().upper()
 
+def normalize_name(s):
+    """Strips non-breaking spaces / collapses stray whitespace so the same
+    store never ends up as two different-looking entries across months."""
+    if s is None:
+        return s
+    s = str(s).replace('\xa0', ' ')
+    s = re.sub(r'\s+', ' ', s)
+    return s.strip()
+
 def parse_database_sheet(path):
     """Database sheet: header row is row index 7 (0-based), data starts row 8."""
     df = pd.read_excel(path, sheet_name='Database', engine='pyxlsb', header=None)
@@ -62,7 +71,7 @@ def parse_database_sheet(path):
 
         rows[code] = {
             'storeCode': code,
-            'store': r[1],
+            'store': normalize_name(r[1]),
             'partner': r[2],
             'classification': r[3],
             'region': r[4],
