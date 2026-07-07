@@ -977,11 +977,11 @@ document.addEventListener('DOMContentLoaded', function() {
     <!-- Row -1: Activation / Sales Toggle (Mobile, Fixed & FBB only — matches MTD tab) -->
     <div class="flex flex-wrap gap-2 items-center mb-2">
       <span class="filter-label" style="align-self:center">Data Type:</span>
-      <button id="dash-mode-act" onclick="setDashMode('activation')"
+      <button id="dash-mode-act" class="dash-mode-act-btn" onclick="setDashMode('activation')"
         style="padding:6px 18px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;border:2px solid #e5e7eb;background:white;color:#6b7280;transition:all .2s">
         <i class="fas fa-bolt mr-1"></i>Activation
       </button>
-      <button id="dash-mode-sal" onclick="setDashMode('sales')"
+      <button id="dash-mode-sal" class="dash-mode-sal-btn" onclick="setDashMode('sales')"
         style="padding:6px 18px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;border:2px solid #c0392b;background:#c0392b;color:white;transition:all .2s">
         <i class="fas fa-shopping-cart mr-1"></i>Sales
       </button>
@@ -1111,7 +1111,16 @@ document.addEventListener('DOMContentLoaded', function() {
       <!-- ── Team Performance Pivot ── -->
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:6px">
         <div class="section-title" style="margin-bottom:0"><i class="fas fa-sitemap mr-2"></i>Team Performance Pivot</div>
-        <div style="display:flex;gap:8px;align-items:center">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <button id="tp-dash-mode-act" class="dash-mode-act-btn" onclick="setDashMode('activation')"
+            style="padding:6px 14px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;border:2px solid #e5e7eb;background:white;color:#6b7280;transition:all .2s">
+            <i class="fas fa-bolt mr-1"></i>Activation
+          </button>
+          <button id="tp-dash-mode-sal" class="dash-mode-sal-btn" onclick="setDashMode('sales')"
+            style="padding:6px 14px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;border:2px solid #c0392b;background:#c0392b;color:white;transition:all .2s">
+            <i class="fas fa-shopping-cart mr-1"></i>Sales
+          </button>
+          <span style="width:1px;height:20px;background:#e5e7eb;margin:0 2px"></span>
           <button id="tp-mode-summary" onclick="setTeamPivotMode('summary')"
             style="padding:6px 16px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;border:2px solid #5E2D91;background:#5E2D91;color:white;transition:all .2s">
             <i class="fas fa-list mr-1"></i>Summary
@@ -1126,7 +1135,7 @@ document.addEventListener('DOMContentLoaded', function() {
           </button>
         </div>
       </div>
-      <div style="font-size:10px;color:var(--text-muted);margin-bottom:10px">اضغط على اسم أي Regional Manager عشان تطوي/تفتح الفريق بتاعه</div>
+      <div style="font-size:10px;color:var(--text-muted);margin-bottom:10px">اضغط على اسم أي Regional Manager عشان تطوي/تفتح الفريق بتاعه · Summary = النسبة بس لكل منتج · Details = Target/Achievement/% كامل</div>
       <div class="chart-card mb-6" style="padding:0;overflow-x:auto">
         <div id="team-pivot-table"></div>
       </div>
@@ -1661,12 +1670,16 @@ function setDashMode(mode) {
     r.fixedSubs  = mode === 'activation' ? r._actFixed  : r._salesFixed;
     r.fbbSubs    = mode === 'activation' ? r._actFbb    : r._salesFbb;
   });
-  document.getElementById('dash-mode-act').style.background = mode==='activation' ? '#5E2D91' : 'white';
-  document.getElementById('dash-mode-act').style.color      = mode==='activation' ? 'white'   : '#6b7280';
-  document.getElementById('dash-mode-act').style.borderColor= mode==='activation' ? '#5E2D91' : '#e5e7eb';
-  document.getElementById('dash-mode-sal').style.background = mode==='sales'      ? '#c0392b' : 'white';
-  document.getElementById('dash-mode-sal').style.color      = mode==='sales'      ? 'white'   : '#6b7280';
-  document.getElementById('dash-mode-sal').style.borderColor= mode==='sales'      ? '#c0392b' : '#e5e7eb';
+  document.querySelectorAll('.dash-mode-act-btn').forEach(function(b){
+    b.style.background = mode==='activation' ? '#5E2D91' : 'white';
+    b.style.color      = mode==='activation' ? 'white'   : '#6b7280';
+    b.style.borderColor= mode==='activation' ? '#5E2D91' : '#e5e7eb';
+  });
+  document.querySelectorAll('.dash-mode-sal-btn').forEach(function(b){
+    b.style.background = mode==='sales'      ? '#c0392b' : 'white';
+    b.style.color      = mode==='sales'      ? 'white'   : '#6b7280';
+    b.style.borderColor= mode==='sales'      ? '#c0392b' : '#e5e7eb';
+  });
   applyFilters();
 }
 </script>
@@ -2106,12 +2119,17 @@ function buildTeamPivotTree(rows) {
   return tree;
 }
 
-function tpProductChips(k) {
+function tpProductCellsHTML(k, valueColor) {
   return PRODUCTS.map(function(p){
     var t = k[p.tKey]||0, a = k[p.aKey]||0;
     var pc = t>0 ? Math.round(a/t*100) : 0;
-    var color = pc>=100 ? '#16a34a' : pc>=80 ? '#f5a623' : '#dc2626';
-    return '<span style="display:inline-block;min-width:52px;text-align:center;font-size:9.5px;font-weight:700;padding:2px 5px;border-radius:5px;margin:1px;background:'+color+'1a;color:'+color+'" title="'+p.label+'">'+p.label.slice(0,3)+' '+pc+'%</span>';
+    var pctColor = valueColor || (pc>=100 ? '#16a34a' : pc>=80 ? '#d97706' : '#dc2626');
+    if (TEAM_PIVOT_MODE === 'details') {
+      return '<td style="padding:8px 8px;text-align:right;font-size:11px;color:'+(valueColor||'#6b7280')+';white-space:nowrap">'+fmtN(t)+'</td>'+
+             '<td style="padding:8px 8px;text-align:right;font-size:11px;color:'+(valueColor||'#374151')+';font-weight:600;white-space:nowrap">'+fmtN(a)+'</td>'+
+             '<td style="padding:8px 10px;text-align:right;font-size:11.5px;font-weight:800;color:'+pctColor+';white-space:nowrap;border-right:1px solid #f1f1f4">'+pc+'%</td>';
+    }
+    return '<td style="padding:8px 10px;text-align:right;font-size:12px;font-weight:800;color:'+pctColor+';white-space:nowrap;border-right:1px solid #f1f1f4">'+pc+'%</td>';
   }).join('');
 }
 
@@ -2119,20 +2137,13 @@ function tpRow(label, indent, rows, style, isLast) {
   var k = calcGroup(rows);
   var pad = 14 + indent*22;
   var bg = style.bg, color = style.color || '#1a1a2e', fw = style.fw || 600, fs = style.fs || 12;
-  var gapColor = k.gap >= 0 ? '#16a34a' : '#dc2626';
-  var html = '<div style="display:table-row;background:'+bg+';'+(style.borderTop?'border-top:'+style.borderTop+';':'')+(isLast?'border-bottom:2px solid #d1d5db;':'')+'">';
-  html += '<div style="display:table-cell;padding:8px '+ (style.clickable?'8px':'14px') +' 8px '+pad+'px;font-size:'+fs+'px;font-weight:'+fw+';color:'+color+';white-space:nowrap;vertical-align:middle'+(style.clickable?';cursor:pointer':'')+'"'+(style.clickable?' onclick="toggleTeamPivotRM(\''+label.replace(/'/g,"\\'")+'\')"':'')+'>'+
+  var tr = '<tr style="background:'+bg+';'+(style.borderTop?'border-top:'+style.borderTop+';':'')+(isLast?'border-bottom:2px solid #d1d5db;':'')+'">';
+  tr += '<td style="padding:8px '+(style.clickable?'8px':'14px')+' 8px '+pad+'px;font-size:'+fs+'px;font-weight:'+fw+';color:'+color+';white-space:nowrap'+(style.clickable?';cursor:pointer':'')+'"'+(style.clickable?' onclick="toggleTeamPivotRM(\''+label.replace(/'/g,"\\'")+'\')"':'')+'>'+
     (style.clickable ? '<i class="fas fa-chevron-'+(TEAM_PIVOT_COLLAPSED[label]?'left':'down')+' mr-2" style="font-size:9px;opacity:.8"></i>' : '') + label +
-  '</div>';
-  html += '<div style="display:table-cell;padding:8px 10px;text-align:right;font-size:'+fs+'px;font-weight:'+fw+';color:'+color+';white-space:nowrap;vertical-align:middle">'+fmtN(k.totalTarget)+'</div>';
-  html += '<div style="display:table-cell;padding:8px 10px;text-align:right;font-size:'+fs+'px;font-weight:'+fw+';color:'+color+';white-space:nowrap;vertical-align:middle">'+fmtN(k.totalAch)+'</div>';
-  html += '<div style="display:table-cell;padding:8px 10px;text-align:right;font-size:'+fs+'px;font-weight:800;color:'+(style.bg==='transparent'?(k.pct>=100?'#16a34a':k.pct>=80?'#d97706':'#dc2626'):color)+';white-space:nowrap;vertical-align:middle">'+k.pct+'%</div>';
-  html += '<div style="display:table-cell;padding:8px 10px;text-align:right;font-size:'+fs+'px;font-weight:700;color:'+(style.bg==='transparent'?gapColor:color)+';white-space:nowrap;vertical-align:middle">'+(k.gap>=0?'+':'')+fmtN(k.gap)+'</div>';
-  if (TEAM_PIVOT_MODE === 'details') {
-    html += '<div style="display:table-cell;padding:6px 10px;white-space:nowrap;vertical-align:middle">'+tpProductChips(k)+'</div>';
-  }
-  html += '</div>';
-  return html;
+  '</td>';
+  tr += tpProductCellsHTML(k, bg==='transparent' ? null : color);
+  tr += '</tr>';
+  return tr;
 }
 
 function renderTeamPivot() {
@@ -2141,15 +2152,26 @@ function renderTeamPivot() {
   var tree = buildTeamPivotTree(filteredData);
   var rmNames = Object.keys(tree).sort(function(a,b){ return calcGroup(tree[b].rows).totalTarget - calcGroup(tree[a].rows).totalTarget; });
 
-  var header = '<div style="display:table;width:100%;border-collapse:collapse;font-family:\'Inter\',sans-serif">' +
-    '<div style="display:table-row;background:#1a1a2e">' +
-      '<div style="display:table-cell;padding:9px 14px;font-size:10px;font-weight:800;color:white;text-transform:uppercase;letter-spacing:.05em">Regional Manager / Supervisor / Area Manager</div>' +
-      '<div style="display:table-cell;padding:9px 10px;font-size:10px;font-weight:800;color:white;text-align:right;text-transform:uppercase">Target</div>' +
-      '<div style="display:table-cell;padding:9px 10px;font-size:10px;font-weight:800;color:white;text-align:right;text-transform:uppercase">Achievement</div>' +
-      '<div style="display:table-cell;padding:9px 10px;font-size:10px;font-weight:800;color:white;text-align:right;text-transform:uppercase">Ach%</div>' +
-      '<div style="display:table-cell;padding:9px 10px;font-size:10px;font-weight:800;color:white;text-align:right;text-transform:uppercase">Gap</div>' +
-      (TEAM_PIVOT_MODE==='details' ? '<div style="display:table-cell;padding:9px 10px;font-size:10px;font-weight:800;color:white;text-transform:uppercase">By Product</div>' : '') +
-    '</div>';
+  var colsPerProduct = TEAM_PIVOT_MODE === 'details' ? 3 : 1;
+  var productHeaderCells = PRODUCTS.map(function(p){
+    return '<th colspan="'+colsPerProduct+'" style="padding:8px 10px;font-size:10px;font-weight:800;color:white;text-align:center;text-transform:uppercase;letter-spacing:.04em;border-right:1px solid rgba(255,255,255,.15)">'+p.label+'</th>';
+  }).join('');
+  var subHeaderCells = TEAM_PIVOT_MODE === 'details'
+    ? PRODUCTS.map(function(){
+        return '<th style="padding:5px 8px;font-size:9px;font-weight:700;color:#c4b5fd;text-align:right;text-transform:uppercase">TGT</th>'+
+               '<th style="padding:5px 8px;font-size:9px;font-weight:700;color:#c4b5fd;text-align:right;text-transform:uppercase">ACH</th>'+
+               '<th style="padding:5px 10px;font-size:9px;font-weight:700;color:#c4b5fd;text-align:right;text-transform:uppercase;border-right:1px solid rgba(255,255,255,.15)">%</th>';
+      }).join('')
+    : '';
+
+  var thead = '<table style="width:100%;border-collapse:collapse;font-family:\'Inter\',sans-serif">' +
+    '<thead>' +
+      '<tr style="background:#1a1a2e">' +
+        '<th rowspan="'+(TEAM_PIVOT_MODE==='details'?2:1)+'" style="padding:9px 14px;font-size:10px;font-weight:800;color:white;text-transform:uppercase;letter-spacing:.05em;text-align:left;vertical-align:bottom">Regional Manager / Supervisor / Area Manager</th>' +
+        productHeaderCells +
+      '</tr>' +
+      (TEAM_PIVOT_MODE==='details' ? '<tr style="background:#2a2a45">'+subHeaderCells+'</tr>' : '') +
+    '</thead><tbody>';
 
   var body = '';
   rmNames.forEach(function(rm){
@@ -2170,7 +2192,7 @@ function renderTeamPivot() {
   });
   body += tpRow('GRAND TOTAL', 0, filteredData, { bg:'#1a1a2e', color:'white', fw:900, fs:13, isLast:true });
 
-  el.innerHTML = header + body + '</div>';
+  el.innerHTML = thead + body + '</tbody></table>';
 }
 
 // ── Export just this section: Summary sheet mirrors the pivot exactly as
@@ -2182,14 +2204,19 @@ function exportTeamPivot() {
   var rmNames = Object.keys(tree).sort(function(a,b){ return calcGroup(tree[b].rows).totalTarget - calcGroup(tree[a].rows).totalTarget; });
 
   var aoa = [];
-  var headerRow = ['Regional Manager', 'Supervisor', 'Area Manager', 'Target', 'Achievement', 'Ach %', 'Gap'];
-  PRODUCTS.forEach(function(p){ headerRow.push(p.label+' Ach%'); });
+  var headerRow = ['Regional Manager', 'Supervisor', 'Area Manager'];
+  PRODUCTS.forEach(function(p){ headerRow.push(p.label+' TGT', p.label+' ACH', p.label+' %'); });
   aoa.push(['Team Performance Pivot']);
   aoa.push([]);
   aoa.push(headerRow);
 
-  function productPctCells(k) {
-    return PRODUCTS.map(function(p){ var t=k[p.tKey]||0, a=k[p.aKey]||0; return t>0 ? Math.round(a/t*100)+'%' : '0%'; });
+  function productCells(k) {
+    var out = [];
+    PRODUCTS.forEach(function(p){
+      var t=k[p.tKey]||0, a=k[p.aKey]||0;
+      out.push(t, a, (t>0?Math.round(a/t*100):0)+'%');
+    });
+    return out;
   }
 
   rmNames.forEach(function(rm){
@@ -2200,20 +2227,20 @@ function exportTeamPivot() {
       var amNames = Object.keys(svData.areaManagers).sort(function(a,b){ return calcGroup(svData.areaManagers[b]).totalTarget - calcGroup(svData.areaManagers[a]).totalTarget; });
       amNames.forEach(function(am){
         var k = calcGroup(svData.areaManagers[am]);
-        aoa.push([rm, sv, am, k.totalTarget, k.totalAch, k.pct+'%', k.gap].concat(productPctCells(k)));
+        aoa.push([rm, sv, am].concat(productCells(k)));
       });
       var ks = calcGroup(svData.rows);
-      aoa.push(['', sv+' Total *', '', ks.totalTarget, ks.totalAch, ks.pct+'%', ks.gap].concat(productPctCells(ks)));
+      aoa.push(['', sv+' Total *', ''].concat(productCells(ks)));
     });
     var kr = calcGroup(rmData.rows);
-    aoa.push([rm+' Total *', '', '', kr.totalTarget, kr.totalAch, kr.pct+'%', kr.gap].concat(productPctCells(kr)));
+    aoa.push([rm+' Total *', '', ''].concat(productCells(kr)));
   });
   var kg = calcGroup(filteredData);
-  aoa.push(['GRAND TOTAL *', '', '', kg.totalTarget, kg.totalAch, kg.pct+'%', kg.gap].concat(productPctCells(kg)));
+  aoa.push(['GRAND TOTAL *', '', ''].concat(productCells(kg)));
 
   var wb2 = XLSX.utils.book_new();
   var wsSummary = XLSX.utils.aoa_to_sheet(aoa);
-  wsSummary['!cols'] = [{wch:22},{wch:24},{wch:24},{wch:10},{wch:12},{wch:9},{wch:10}].concat(PRODUCTS.map(function(){ return {wch:11}; }));
+  wsSummary['!cols'] = [{wch:22},{wch:24},{wch:24}].concat(PRODUCTS.map(function(){ return [{wch:10},{wch:10},{wch:8}]; }).flat());
   XLSX.utils.book_append_sheet(wb2, wsSummary, 'Summary');
 
   var fullData = filteredData.map(qcRowToExportObj);
