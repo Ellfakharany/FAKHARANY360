@@ -974,6 +974,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
   <!-- Sticky Filters -->
   <div id="filters-bar" class="filters-sticky z-30 px-6 pt-3 pb-2 shadow">
+    <!-- Row -1: Activation / Sales Toggle (Mobile, Fixed & FBB only — matches MTD tab) -->
+    <div class="flex flex-wrap gap-2 items-center mb-2">
+      <span class="filter-label" style="align-self:center">Data Type:</span>
+      <button id="dash-mode-act" onclick="setDashMode('activation')"
+        style="padding:6px 18px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;border:2px solid #e5e7eb;background:white;color:#6b7280;transition:all .2s">
+        <i class="fas fa-bolt mr-1"></i>Activation
+      </button>
+      <button id="dash-mode-sal" onclick="setDashMode('sales')"
+        style="padding:6px 18px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;border:2px solid #c0392b;background:#c0392b;color:white;transition:all .2s">
+        <i class="fas fa-shopping-cart mr-1"></i>Sales
+      </button>
+      <span style="font-size:10px;color:#9ca3af">(بيفرق بس في Mobile / Fixed / FBB — باقي المنتجات زي ما هي)</span>
+    </div>
     <!-- Row 0: Classification Slicer -->
     <div class="flex flex-wrap gap-2 items-center mb-2">
       <span class="filter-label" style="align-self:center">Classification:</span>
@@ -1591,6 +1604,48 @@ document.addEventListener('DOMContentLoaded', function() {
 
 <script>
 let RAW_DATA = []; // populated at runtime via fetchAllMonthsData() from data/manifest.json + data/*.json
+var DASH_MODE = 'sales'; // 'sales' | 'activation' — main dashboard Data Type toggle (Mobile/Fixed/FBB only)
+
+// Backs up each row's Sales figure (the JSON default) and resolves its
+// Activation figure (falls back to Sales if the month has no IDLE split),
+// so setDashMode() can swap between them without ever losing the original.
+function backupSalesActivationFields(rows) {
+  rows.forEach(function(r){
+    if (r._salesMobile === undefined) {
+      r._salesMobile = r.mobileSubs || 0;
+      r._salesFixed  = r.fixedSubs  || 0;
+      r._salesFbb    = r.fbbSubs    || 0;
+      r._actMobile = (r.mobileSubsAct !== undefined && r.mobileSubsAct !== null) ? r.mobileSubsAct : r._salesMobile;
+      r._actFixed  = (r.fixedSubsAct  !== undefined && r.fixedSubsAct  !== null) ? r.fixedSubsAct  : r._salesFixed;
+      r._actFbb    = (r.fbbSubsAct    !== undefined && r.fbbSubsAct    !== null) ? r.fbbSubsAct    : r._salesFbb;
+    }
+  });
+}
+
+// ── Data Type toggle (Overview/Products/Rankings/Heatmap/Charts/Package Mix
+// all read r.mobileSubs/r.fixedSubs/r.fbbSubs directly, so we swap the value
+// on every RAW_DATA row in place, then re-run the normal filter pipeline —
+// exactly the same idea as MTD's Activation/Sales toggle, applied here to
+// the closed-month dataset instead of the live MTD one) ──
+function setDashMode(mode) {
+  var hasActivationData = RAW_DATA.some(function(r){ return r.mobileSubsAct !== undefined || r.fixedSubsAct !== undefined || r.fbbSubsAct !== undefined; });
+  if (mode === 'activation' && !hasActivationData) {
+    alert('⚠️ مفيش بيانات Activation منفصلة متاحة للشهور المحمّلة دي؛ هيتم عرض نفس أرقام Sales مؤقتاً.');
+  }
+  DASH_MODE = mode;
+  RAW_DATA.forEach(function(r){
+    r.mobileSubs = mode === 'activation' ? r._actMobile : r._salesMobile;
+    r.fixedSubs  = mode === 'activation' ? r._actFixed  : r._salesFixed;
+    r.fbbSubs    = mode === 'activation' ? r._actFbb    : r._salesFbb;
+  });
+  document.getElementById('dash-mode-act').style.background = mode==='activation' ? '#5E2D91' : 'white';
+  document.getElementById('dash-mode-act').style.color      = mode==='activation' ? 'white'   : '#6b7280';
+  document.getElementById('dash-mode-act').style.borderColor= mode==='activation' ? '#5E2D91' : '#e5e7eb';
+  document.getElementById('dash-mode-sal').style.background = mode==='sales'      ? '#c0392b' : 'white';
+  document.getElementById('dash-mode-sal').style.color      = mode==='sales'      ? 'white'   : '#6b7280';
+  document.getElementById('dash-mode-sal').style.borderColor= mode==='sales'      ? '#c0392b' : '#e5e7eb';
+  applyFilters();
+}
 </script>
 <script>
 /* ====================================
@@ -1639,6 +1694,13 @@ function initAppWithData(injectedData) {
     RAW_DATA.length = 0;
     injectedData.forEach(function(r){ RAW_DATA.push(r); });
   }
+
+  // Stash the Sales-vs-Activation pair for Mobile/Fixed/FBB on every row so
+  // the Data Type toggle can flip between them instantly without re-fetching
+  // anything. The JSON's default mobileSubs/fixedSubs/fbbSubs are Sales
+  // numbers; mobileSubsAct/fixedSubsAct/fbbSubsAct (only present for months
+  // where the closure file's IDLE sheet had a usable split) hold Activation.
+  backupSalesActivationFields(RAW_DATA);
 
   const loadEl = document.getElementById('loading-screen');
   if (loadEl) { loadEl.style.display = 'flex'; loadEl.style.zIndex = '9998'; }
