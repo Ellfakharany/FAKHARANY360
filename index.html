@@ -1121,14 +1121,14 @@ document.addEventListener('DOMContentLoaded', function() {
       <div class="section-title"><i class="fas fa-layer-group mr-2"></i>Tariff Mix Analysis</div>
       <div style="font-size:10px;color:var(--text-muted);margin:-8px 0 10px">اضغط على أي كارت أو جزء من الدائرة عشان تشوف الفروع اللي عاملة الأرقام دي</div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6" id="tariff-kpi-grid"></div>
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        <div class="chart-card">
-          <div class="chart-title">Tariff Mix Distribution</div>
-          <canvas id="chart-tariff-donut" height="220"></canvas>
+      <div class="grid grid-cols-2 gap-3 mb-4">
+        <div class="chart-card" style="padding:10px">
+          <div class="chart-title" style="font-size:11px">Tariff Mix Distribution</div>
+          <canvas id="chart-tariff-donut" height="150"></canvas>
         </div>
-        <div class="chart-card col-span-2">
-          <div class="chart-title">Tariff Mix by Month</div>
-          <canvas id="chart-tariff-trend" height="220"></canvas>
+        <div class="chart-card" style="padding:10px">
+          <div class="chart-title" style="font-size:11px">Tariff Mix by Month</div>
+          <canvas id="chart-tariff-trend" height="150"></canvas>
         </div>
       </div>
       <div id="tariff-drill" style="margin-bottom:16px"></div>
@@ -2195,11 +2195,20 @@ function renderTariffKPIs() {
 
   // Build per-store data for the drilldown (uses the same rows already
   // powering the KPI totals above, so it's always consistent with them).
+  // Rows are per store PER MONTH, so when the filter spans more than one
+  // month the same store would otherwise show up multiple times — group
+  // by store and sum, so each store appears once with its total.
   ['low','mid','high','pt12'].forEach(function(key){
     const fieldMap = { low:'lowT', mid:'midT', high:'highT', pt12:'pt12' };
-    TARIFF_STORE_DATA[key] = filteredData
-      .filter(function(r){ return (Number(r[fieldMap[key]])||0) > 0; })
-      .map(function(r){ return { store:r.store, supervisor:r.supervisor, val:Number(r[fieldMap[key]])||0 }; })
+    const grouped = {};
+    filteredData.forEach(function(r){
+      const v = Number(r[fieldMap[key]])||0;
+      if (v <= 0) return;
+      const k = r.storeCode || r.store;
+      if (!grouped[k]) grouped[k] = { store:r.store, supervisor:r.supervisor, val:0 };
+      grouped[k].val += v;
+    });
+    TARIFF_STORE_DATA[key] = Object.keys(grouped).map(function(k){ return grouped[k]; })
       .sort(function(a,b){ return b.val - a.val; });
   });
 
@@ -3757,6 +3766,39 @@ function qcRowToExportObj(r) {
   return o;
 }
 
+function qcBuildSummaryAOA(kA, kB, labelA, labelB, filterLine) {
+  var aoa = [];
+  aoa.push([labelA+' vs '+labelB]);
+  aoa.push([filterLine || '']);
+  aoa.push([]);
+  aoa.push(['EXECUTIVE SUMMARY']);
+  aoa.push(['Metric', labelA, labelB, 'Δ']);
+  aoa.push(['Total Target', kA.totalTarget, kB.totalTarget, kB.totalTarget-kA.totalTarget]);
+  aoa.push(['Achievement', kA.totalAch, kB.totalAch, kB.totalAch-kA.totalAch]);
+  aoa.push(['Achievement %', kA.pct.toFixed(1)+'%', kB.pct.toFixed(1)+'%', (kB.pct-kA.pct).toFixed(1)+'pp']);
+  aoa.push(['Gap / Surplus', kA.gap, kB.gap, kB.gap-kA.gap]);
+  aoa.push(['# Stores', kA.storeCount, kB.storeCount, kB.storeCount-kA.storeCount]);
+  aoa.push([]);
+  aoa.push(['PRODUCT BREAKDOWN']);
+  aoa.push(['Product', labelA, labelB, 'Δ pp']);
+  PRODUCTS.forEach(function(p){
+    var tA=kA[p.tKey]||0, aAv=kA[p.aKey]||0, tB=kB[p.tKey]||0, aBv=kB[p.aKey]||0;
+    var pA = tA>0 ? aAv/tA*100 : 0, pB = tB>0 ? aBv/tB*100 : 0;
+    aoa.push([p.label, aAv+' ('+pA.toFixed(0)+'%)', aBv+' ('+pB.toFixed(0)+'%)', (pB-pA).toFixed(1)+'pp']);
+  });
+  aoa.push([]);
+  aoa.push(['TARIFF MIX (LOW / MID / HIGH / 12PT)']);
+  aoa.push(['Tier', labelA, labelB, 'Δ']);
+  var totA = (kA.lowT||0)+(kA.midT||0)+(kA.highT||0)+(kA.pt12||0);
+  var totB = (kB.lowT||0)+(kB.midT||0)+(kB.highT||0)+(kB.pt12||0);
+  [['Low Tier (25,29,32,37)','lowT'],['Mid Tier (40,45,46,52)','midT'],['High Tier (50+)','highT'],['12 PT (12-month plan)','pt12']].forEach(function(pair){
+    var vA = kA[pair[1]]||0, vB = kB[pair[1]]||0;
+    var pA = totA>0 ? vA/totA*100 : 0, pB = totB>0 ? vB/totB*100 : 0;
+    aoa.push([pair[0], vA+' ('+pA.toFixed(1)+'%)', vB+' ('+pB.toFixed(1)+'%)', (pB-pA).toFixed(1)+'pp']);
+  });
+  return aoa;
+}
+
 function qcExportCompare() {
   if (!QC_LAST_COMPARE || (!QC_LAST_COMPARE.rA.length && !QC_LAST_COMPARE.rB.length)) {
     alert('⚠️ شغّل مقارنة الأول قبل الـ Export'); return;
@@ -3769,12 +3811,12 @@ function qcExportCompare() {
   var wsB = XLSX.utils.json_to_sheet(dataB.length ? dataB : [{'Info':'No rows'}]);
   XLSX.utils.book_append_sheet(wb2, wsA, ('A - '+c.labelA).slice(0,31));
   XLSX.utils.book_append_sheet(wb2, wsB, ('B - '+c.labelB).slice(0,31));
-  var summary = [{
-    'Side A': c.labelA, 'A Stores': dataA.length,
-    'Side B': c.labelB, 'B Stores': dataB.length,
-    'Filters': (c.moLabel||'') + (c.rgLabel||'')
-  }];
-  XLSX.utils.book_append_sheet(wb2, XLSX.utils.json_to_sheet(summary), 'Summary');
+  var kA = calcGroup(c.rA), kB = calcGroup(c.rB);
+  var filterLine = (c.moLabel||'') + (c.rgLabel||'');
+  var summaryAOA = qcBuildSummaryAOA(kA, kB, c.labelA, c.labelB, filterLine);
+  var wsSummary = XLSX.utils.aoa_to_sheet(summaryAOA);
+  wsSummary['!cols'] = [{wch:28},{wch:22},{wch:22},{wch:14}];
+  XLSX.utils.book_append_sheet(wb2, wsSummary, 'Summary');
   exportWithPassword(wb2, 'Compare_'+c.labelA.replace(/\s+/g,'')+'_vs_'+c.labelB.replace(/\s+/g,''));
 }
 
@@ -5305,6 +5347,50 @@ function mtdQcRowToExportObj(r, isClosed) {
   return o;
 }
 
+function mtdBuildSummaryAOA(kA, kB, labelA, labelB) {
+  var aoa = [];
+  aoa.push([labelA+' vs '+labelB]);
+  aoa.push([]);
+  aoa.push(['EXECUTIVE SUMMARY']);
+  aoa.push(['Metric', labelA, labelB, 'Δ']);
+  function totOf(k){
+    var t=0,a=0;
+    Object.keys(MTD_PRODS).forEach(function(key){ t += (k[key]&&k[key].tgt)||0; a += (k[key]&&k[key].act)||0; });
+    t += (k.wallet&&k.wallet.tgt)||0; a += (k.wallet&&k.wallet.act)||0;
+    return {t:t,a:a};
+  }
+  var totA = totOf(kA), totB = totOf(kB);
+  var pctA = totA.t>0 ? totA.a/totA.t*100 : 0, pctB = totB.t>0 ? totB.a/totB.t*100 : 0;
+  aoa.push(['Total Target', totA.t, totB.t, totB.t-totA.t]);
+  aoa.push(['Achievement', totA.a, totB.a, totB.a-totA.a]);
+  aoa.push(['Achievement %', pctA.toFixed(1)+'%', pctB.toFixed(1)+'%', (pctB-pctA).toFixed(1)+'pp']);
+  aoa.push(['Gap / Surplus', totA.a-totA.t, totB.a-totB.t, (totB.a-totB.t)-(totA.a-totA.t)]);
+  aoa.push(['# Stores', kA.storeCount||0, kB.storeCount||0, (kB.storeCount||0)-(kA.storeCount||0)]);
+  aoa.push([]);
+  aoa.push(['PRODUCT BREAKDOWN']);
+  aoa.push(['Product', labelA, labelB, 'Δ pp']);
+  Object.keys(MTD_PRODS).forEach(function(key){
+    var p = MTD_PRODS[key];
+    var gA = kA[key]||{tgt:0,act:0}, gB = kB[key]||{tgt:0,act:0};
+    var pA = gA.tgt>0 ? gA.act/gA.tgt*100 : 0, pB = gB.tgt>0 ? gB.act/gB.tgt*100 : 0;
+    aoa.push([p.label, gA.act+' ('+pA.toFixed(0)+'%)', gB.act+' ('+pB.toFixed(0)+'%)', (pB-pA).toFixed(1)+'pp']);
+  });
+  var wA = kA.wallet||{tgt:0,act:0}, wB = kB.wallet||{tgt:0,act:0};
+  var pWA = wA.tgt>0 ? wA.act/wA.tgt*100 : 0, pWB = wB.tgt>0 ? wB.act/wB.tgt*100 : 0;
+  aoa.push(['Wallet', wA.act+' ('+pWA.toFixed(0)+'%)', wB.act+' ('+pWB.toFixed(0)+'%)', (pWB-pWA).toFixed(1)+'pp']);
+  aoa.push([]);
+  aoa.push(['TARIFF MIX (LOW / MID / HIGH / 12PT)']);
+  aoa.push(['Tier', labelA, labelB, 'Δ']);
+  var tierTotA = (kA.lowT||0)+(kA.midT||0)+(kA.highT||0)+(kA.pt12||0);
+  var tierTotB = (kB.lowT||0)+(kB.midT||0)+(kB.highT||0)+(kB.pt12||0);
+  [['Low Tier (25,29,32,37)','lowT'],['Mid Tier (40,45,46,52)','midT'],['High Tier (50+)','highT'],['12 PT (12-month plan)','pt12']].forEach(function(pair){
+    var vA = kA[pair[1]]||0, vB = kB[pair[1]]||0;
+    var pA = tierTotA>0 ? vA/tierTotA*100 : 0, pB = tierTotB>0 ? vB/tierTotB*100 : 0;
+    aoa.push([pair[0], vA+' ('+pA.toFixed(1)+'%)', vB+' ('+pB.toFixed(1)+'%)', (pB-pA).toFixed(1)+'pp']);
+  });
+  return aoa;
+}
+
 function mtdQcExportCompare() {
   if (!MTD_QC_LAST_COMPARE || (!MTD_QC_LAST_COMPARE.rA.length && !MTD_QC_LAST_COMPARE.rB.length)) {
     alert('⚠️ شغّل مقارنة الأول قبل الـ Export (Export غير متاح لمقارنة Day vs Day)'); return;
@@ -5317,8 +5403,12 @@ function mtdQcExportCompare() {
   var wsB = XLSX.utils.json_to_sheet(dataB.length ? dataB : [{'Info':'No rows'}]);
   XLSX.utils.book_append_sheet(wb2, wsA, ('A - '+c.labelA).slice(0,31));
   XLSX.utils.book_append_sheet(wb2, wsB, ('B - '+c.labelB).slice(0,31));
-  var summary = [{ 'Side A': c.labelA, 'A Stores': dataA.length, 'Side B': c.labelB, 'B Stores': dataB.length }];
-  XLSX.utils.book_append_sheet(wb2, XLSX.utils.json_to_sheet(summary), 'Summary');
+  var kA = mtdQcCalcGroup(c.rA);
+  var kB = c.isClosedMonth ? mtdQcCalcGroupFromRaw(c.rB) : mtdQcCalcGroup(c.rB);
+  var summaryAOA = mtdBuildSummaryAOA(kA, kB, c.labelA, c.labelB);
+  var wsSummary = XLSX.utils.aoa_to_sheet(summaryAOA);
+  wsSummary['!cols'] = [{wch:28},{wch:22},{wch:22},{wch:14}];
+  XLSX.utils.book_append_sheet(wb2, wsSummary, 'Summary');
   exportWithPassword(wb2, 'MTDCompare_'+c.labelA.replace(/\s+/g,'')+'_vs_'+c.labelB.replace(/[\s()]+/g,''));
 }
 
