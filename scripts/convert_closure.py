@@ -125,14 +125,14 @@ def parse_database_sheet(path):
         rows[code] = {
             'storeCode': code,
             'store': normalize_name(r[1]),
-            'partner': r[2],
+            'partner': normalize_name(r[2]),
             'classification': r[3],
             'region': r[4],
-            'accountManager': r[5],
-            'channelManager': r[6],
-            'areaManager': r[7],
-            'supervisor': r[8],
-            'regionalManager': r[10],
+            'accountManager': normalize_name(r[5]),
+            'channelManager': normalize_name(r[6]),
+            'areaManager': normalize_name(r[7]),
+            'supervisor': normalize_name(r[8]),
+            'regionalManager': normalize_name(r[10]),
             # Sub-product families (Database columns, 0-indexed) — these are
             # near the front of the sheet and haven't moved historically, but
             # if WE ever restructures Mobile's own package breakdown too,
@@ -164,7 +164,8 @@ def parse_idle_sheet(path):
     """
     try:
         df = pd.read_excel(path, sheet_name='IDLE', engine='pyxlsb', header=None)
-    except Exception:
+    except Exception as e:
+        print(f"  ⚠️  IDLE sheet: could not read ({e}) — falling back to Sales-only for this month.")
         return {}
 
     header = df.iloc[5]
@@ -173,8 +174,11 @@ def parse_idle_sheet(path):
         for prod in ('Mobile', 'Fixed', 'FBB'):
             cols[prod+'Sales'] = find_total_col(header, prod, 'All Sales')
             cols[prod+'Act']   = find_total_col(header, prod, 'All Activation')
-    except ValueError:
-        return {}  # this month's IDLE sheet doesn't have the split — skip quietly
+    except ValueError as e:
+        # this month's IDLE sheet doesn't have the split — skip quietly, but
+        # log *why* so we can tell "sheet missing" apart from "headers renamed"
+        print(f"  ⚠️  IDLE sheet: {e} — falling back to Sales-only for this month.")
+        return {}
 
     out = {}
     for i in range(8, len(df)):
