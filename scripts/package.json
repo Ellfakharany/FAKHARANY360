@@ -1,0 +1,10 @@
+{
+  "name": "fakharany360-mtd-converter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Converts daily raw_mtd/*.xlsb files into data/mtd/*.json for FAKHARANY360's MTD tab auto-load feature.",
+  "dependencies": {
+    "xlsx": "^0.18.5",
+    "jszip": "^3.10.1"
+  }
+}
