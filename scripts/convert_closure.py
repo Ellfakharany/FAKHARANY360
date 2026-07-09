@@ -42,12 +42,19 @@ def norm_code(x):
 
 def normalize_name(s):
     """Strips non-breaking spaces / collapses stray whitespace so the same
-    store never ends up as two different-looking entries across months."""
+    store never ends up as two different-looking entries across months.
+    Also treats Excel PivotTable export artifacts like the literal text
+    '(blank)' as truly empty, so it doesn't show up as a fake filter option
+    in the dashboard (this happens when the source workbook's PivotTable had
+    no value for that cell and Excel wrote the placeholder text instead of
+    leaving it empty)."""
     if s is None:
         return s
     s = str(s).replace('\xa0', ' ')
-    s = re.sub(r'\s+', ' ', s)
-    return s.strip()
+    s = re.sub(r'\s+', ' ', s).strip()
+    if s.lower() in ('(blank)', 'blank', 'n/a', 'na', '#n/a'):
+        return ''
+    return s
 
 def find_total_col(header_row, product_label, field_label, required=True):
     """Locate a 'grand total' column (e.g. 'FBB Target') by its exact header
@@ -80,12 +87,68 @@ def find_total_col(header_row, product_label, field_label, required=True):
     )
 
 
+def find_col_by_keyword(header_row, keyword, exclude=None, max_col=20):
+    """Locate a per-store header column (Account Manager, Area Manager, etc.)
+    by searching for a keyword rather than trusting a fixed column number.
+    These columns have been reordered/duplicated between months before (e.g.
+    March-2026 inserted a second 'Channel Manager' column and moved 'Regional
+    Manager' one slot earlier), which silently fed the wrong manager's name
+    into the wrong field under a fixed-index scheme. Only searches the first
+    `max_col` columns, since the keyword could otherwise coincidentally match
+    something far off in the huge package-total section of the sheet.
+    `exclude`, if given, skips any header containing that substring too —
+    used to tell 'Channel Manager' apart from 'Regional Manager' having both
+    literally contain neither word, but keeps the two "Channel Manager"-ish
+    columns (Partner Channel Manager vs plain Channel Manager) distinguishable
+    if ever needed.
+    """
+    keyword = keyword.lower()
+    for j, label in header_row.items():
+        if j >= max_col:
+            break
+        if pd.isna(label):
+            continue
+        low = str(label).strip().lower()
+        if keyword in low and (exclude is None or exclude not in low):
+            return j
+    return None
+
+
 def parse_database_sheet(path):
     """Database sheet: header row is row index 7 (0-based) for per-store
     columns, and row index 5 holds the repeated 'X Target'/'X Subscriptions'/
     'X %' labels for each product's grand-total triple. Data starts row 8."""
     df = pd.read_excel(path, sheet_name='Database', engine='pyxlsb', header=None)
+    store_header = df.iloc[7]
     total_header = df.iloc[5]
+
+    # Locate the per-store manager/partner columns by header keyword, not by
+    # a fixed index — see find_col_by_keyword docstring for why. Falls back
+    # to the historical fixed index only if the keyword search comes up
+    # empty, so this stays compatible with older months whose headers may be
+    # blank/differently worded.
+    store_col      = find_col_by_keyword(store_header, 'branch name')
+    partner_col    = find_col_by_keyword(store_header, 'partner')
+    classif_col    = find_col_by_keyword(store_header, 'classification')
+    region_col     = find_col_by_keyword(store_header, 'region')
+    account_col    = find_col_by_keyword(store_header, 'account manager')
+    channel_col    = find_col_by_keyword(store_header, 'channel manager')
+    area_col       = find_col_by_keyword(store_header, 'area man')  # tolerates "Area Manger" typo
+    supervisor_col = find_col_by_keyword(store_header, 'supervisor')
+    regional_col   = find_col_by_keyword(store_header, 'regional manager')
+
+    # Fall back to the original fixed positions for anything the keyword
+    # search didn't find, so a month with unusually blank/odd headers still
+    # processes instead of erroring out.
+    if store_col is None: store_col = 1
+    if partner_col is None: partner_col = 2
+    if classif_col is None: classif_col = 3
+    if region_col is None: region_col = 4
+    if account_col is None: account_col = 5
+    if channel_col is None: channel_col = 6
+    if area_col is None: area_col = 7
+    if supervisor_col is None: supervisor_col = 8
+    if regional_col is None: regional_col = 10
 
     # Resolve each product's grand-total columns by header text (see
     # find_total_col docstring) — NOT by a fixed column index, since new
@@ -113,7 +176,7 @@ def parse_database_sheet(path):
         # Skip summary/total rows — they have something in the code column
         # (e.g. "Grand Total") but no real store name, which produced NaN
         # fields all the way through and broke the JSON output.
-        if pd.isna(r[1]) or 'grand total' in code.lower() or 'total' == code.lower():
+        if pd.isna(r[store_col]) or 'grand total' in code.lower() or 'total' == code.lower():
             continue
 
         def num(col):
@@ -124,15 +187,15 @@ def parse_database_sheet(path):
 
         rows[code] = {
             'storeCode': code,
-            'store': normalize_name(r[1]),
-            'partner': normalize_name(r[2]),
-            'classification': r[3],
-            'region': r[4],
-            'accountManager': normalize_name(r[5]),
-            'channelManager': normalize_name(r[6]),
-            'areaManager': normalize_name(r[7]),
-            'supervisor': normalize_name(r[8]),
-            'regionalManager': normalize_name(r[10]),
+            'store': normalize_name(r[store_col]),
+            'partner': normalize_name(r[partner_col]),
+            'classification': r[classif_col],
+            'region': r[region_col],
+            'accountManager': normalize_name(r[account_col]),
+            'channelManager': normalize_name(r[channel_col]),
+            'areaManager': normalize_name(r[area_col]),
+            'supervisor': normalize_name(r[supervisor_col]),
+            'regionalManager': normalize_name(r[regional_col]),
             # Sub-product families (Database columns, 0-indexed) — these are
             # near the front of the sheet and haven't moved historically, but
             # if WE ever restructures Mobile's own package breakdown too,
@@ -311,6 +374,41 @@ def parse_wallet_sheet(path):
         }
     return out
 
+MANAGER_FIELDS = ('supervisor', 'areaManager', 'regionalManager', 'accountManager', 'channelManager')
+
+def build_manager_reference(data_dir, exclude_month=None):
+    """Builds a storeCode -> {supervisor, areaManager, ...} lookup table from
+    every other month's already-converted JSON in data_dir, most-recent-wins.
+    This is the VLOOKUP-by-store-code idea: some months' source workbook has
+    a manager column that's genuinely blank at the source (e.g. March-2026's
+    Supervisor column was blank for all 264 stores) — that can't be recovered
+    from that month's own file, but the store-to-supervisor/area-manager/etc.
+    assignment barely changes month to month, so backfilling from whichever
+    other month last had a real value for that store is a reasonable stand-in
+    until the source workbook itself gets corrected.
+    """
+    ref = {}
+    for f in sorted(glob.glob(os.path.join(data_dir, '*.json'))):
+        base = os.path.splitext(os.path.basename(f))[0]
+        if not re.match(r'^\d{4}-\d{2}$', base) or base == exclude_month:
+            continue
+        try:
+            with open(f, encoding='utf-8') as fh:
+                month_rows = json.load(fh)
+        except Exception:
+            continue
+        for row in month_rows:
+            code = row.get('storeCode')
+            if not code:
+                continue
+            entry = ref.setdefault(code, {})
+            for field in MANAGER_FIELDS:
+                val = row.get(field)
+                if val:  # non-empty; later (sorted-ascending) months overwrite earlier ones
+                    entry[field] = val
+    return ref
+
+
 def detect_month(filename):
     """Finds a Month-Year pattern in a filename, e.g. 'May-2026', 'May_2026', 'May 2026'."""
     m = re.search(r'([A-Za-z]{3,9})[\s_.\-]+(\d{4})', filename)
@@ -355,10 +453,12 @@ def scan_and_convert(raw_dir, data_dir):
         out_name = f'{yyyy}-{mm}.json'
         out_path = os.path.join(data_dir, out_name)
         try:
-            rows = build_month(pair['mobile'], pair['wallet'], month_str)
+            manager_ref = build_manager_reference(data_dir, exclude_month=f'{yyyy}-{mm}')
+            rows, filled_count = build_month(pair['mobile'], pair['wallet'], month_str, manager_ref)
             with open(out_path, 'w', encoding='utf-8') as fh:
                 json.dump(sanitize_rows(rows), fh, ensure_ascii=False, allow_nan=False)
-            print(f'  ✅ {month_str} → {out_name} ({len(rows)} stores)')
+            extra = f' — {filled_count} manager field(s) backfilled from other months' if filled_count else ''
+            print(f'  ✅ {month_str} → {out_name} ({len(rows)} stores){extra}')
             processed.append(f'{yyyy}-{mm}')
         except Exception as e:
             # One month's workbook having an unexpected/broken layout shouldn't
@@ -396,7 +496,7 @@ def sanitize_rows(rows):
     return rows
 
 
-def build_month(mobile_path, wepay_path, month_str):
+def build_month(mobile_path, wepay_path, month_str, manager_reference=None):
     mm, yyyy = month_str.split('-')
     month2 = MONTH_ABBR[int(mm)]
 
@@ -404,8 +504,10 @@ def build_month(mobile_path, wepay_path, month_str):
     tariffs = parse_tariffs_sheet(mobile_path)
     wallet = parse_wallet_sheet(wepay_path)
     idle = parse_idle_sheet(mobile_path)
+    manager_reference = manager_reference or {}
 
     rows = []
+    filled_count = 0
     for code, base in db.items():
         t = tariffs.get(code, {})
         w = wallet.get(code, {'walletTarget': 0, 'walletSales': 0})
@@ -432,6 +534,18 @@ def build_month(mobile_path, wepay_path, month_str):
             'weClubTarget': base['weClubTarget'], 'weClubSubs': base['weClubSubs'],
             'paygTarget': base['paygTarget'], 'paygSubs': base['paygSubs'],
         }
+
+        # VLOOKUP-by-store-code fallback: if this month's source workbook left
+        # a manager field blank (e.g. March-2026's Supervisor column), backfill
+        # it from whatever other month last had a real value for that same
+        # store code, rather than shipping an empty field to the dashboard.
+        ref_entry = manager_reference.get(code)
+        if ref_entry:
+            for field in MANAGER_FIELDS:
+                if not row.get(field) and ref_entry.get(field):
+                    row[field] = ref_entry[field]
+                    filled_count += 1
+
         # Activation figures (Mobile/Fixed/FBB only) — omitted entirely for
         # months whose IDLE sheet didn't have a usable split, so the frontend
         # cleanly falls back to Sales for those months.
@@ -443,7 +557,7 @@ def build_month(mobile_path, wepay_path, month_str):
             if k.startswith('kix') or k.startswith('taz'):
                 row[k] = v
         rows.append(row)
-    return rows
+    return rows, filled_count
 
 if __name__ == '__main__':
     if len(sys.argv) >= 2 and sys.argv[1] == '--scan':
@@ -451,7 +565,8 @@ if __name__ == '__main__':
         scan_and_convert(raw_dir, data_dir)
     else:
         mobile_path, wepay_path, month_str, out_path = sys.argv[1:5]
-        rows = build_month(mobile_path, wepay_path, month_str)
+        manager_ref = build_manager_reference(os.path.dirname(out_path) or '.')
+        rows, filled_count = build_month(mobile_path, wepay_path, month_str, manager_ref)
         with open(out_path, 'w', encoding='utf-8') as f:
             json.dump(sanitize_rows(rows), f, ensure_ascii=False, allow_nan=False)
         print(f'Wrote {len(rows)} store rows to {out_path}')
