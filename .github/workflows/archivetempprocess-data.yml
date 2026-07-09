@@ -41,19 +41,4 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/ raw/
           git diff --cached --quiet || git commit -m "Auto-process monthly closure data [skip ci]"
-
-          # The remote can move between checkout and push if another run (or a
-          # manual upload) landed in between — that's a normal race, not a real
-          # error, so retry with a rebase instead of giving up after one push.
-          for i in 1 2 3 4 5; do
-            if git push; then
-              echo "Pushed successfully."
-              exit 0
-            fi
-            echo "Push rejected (attempt $i/5) — pulling latest changes and retrying..."
-            git pull --rebase origin main
-            sleep 2
-          done
-
-          echo "Failed to push after 5 attempts."
-          exit 1
+          git push
