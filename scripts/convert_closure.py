@@ -200,21 +200,39 @@ def parse_idle_sheet(path):
 
 
 def parse_tariffs_sheet(path):
-    """Tariffs Per Stoers sheet: header row index 6, data from row 7."""
+    """Tariffs Per Stoers sheet: header row usually at index 6, data right
+    after it. That row index has shifted before (e.g. March-2026 workbook),
+    so we search nearby rows for the 'StoreCodeBSS' marker instead of
+    assuming a fixed position — the same problem the Database/IDLE totals
+    had, just for the header *row* instead of a header *column*.
+    """
     df = pd.read_excel(path, sheet_name='Tariffs Per Stoers', engine='pyxlsb', header=None)
-    header = df.iloc[6]
+
+    header_row_idx = None
     code_col = None
     col_labels = {}
-    for j, label in header.items():
-        if pd.isna(label): continue
-        label = str(label).strip()
-        if label == 'StoreCodeBSS':
-            code_col = j
-        else:
-            col_labels[j] = label
+    for candidate in range(0, min(15, len(df))):
+        row = df.iloc[candidate]
+        found_code_col = None
+        labels = {}
+        for j, label in row.items():
+            if pd.isna(label): continue
+            label = str(label).strip()
+            if label == 'StoreCodeBSS':
+                found_code_col = j
+            else:
+                labels[j] = label
+        if found_code_col is not None:
+            header_row_idx, code_col, col_labels = candidate, found_code_col, labels
+            break
+
+    if code_col is None:
+        print("  ⚠️  Tariffs Per Stoers: could not find 'StoreCodeBSS' header in the first "
+              "15 rows — skipping tariff-mix data for this month (targets/subs are unaffected).")
+        return {}
 
     out = {}
-    for i in range(7, len(df)):
+    for i in range(header_row_idx + 1, len(df)):
         r = df.iloc[i]
         code = r[code_col]
         if pd.isna(code): continue
@@ -266,10 +284,23 @@ def parse_tariffs_sheet(path):
 
 def parse_wallet_sheet(path):
     df = pd.read_excel(path, sheet_name='Sales VS Target', engine='pyxlsb', header=None)
-    header = df.iloc[0]
-    col = {str(v).strip(): j for j, v in header.items() if pd.notna(v)}
+
+    header_row_idx = None
+    col = {}
+    for candidate in range(0, min(15, len(df))):
+        row = df.iloc[candidate]
+        labels = {str(v).strip(): j for j, v in row.items() if pd.notna(v)}
+        if 'StoreCodeBSS' in labels:
+            header_row_idx, col = candidate, labels
+            break
+
+    if header_row_idx is None or 'Wallet Target' not in col or 'Sales' not in col:
+        print("  ⚠️  Sales VS Target (Wallet): could not find expected headers "
+              "('StoreCodeBSS' / 'Wallet Target' / 'Sales') — skipping Wallet data for this month.")
+        return {}
+
     out = {}
-    for i in range(1, len(df)):
+    for i in range(header_row_idx + 1, len(df)):
         r = df.iloc[i]
         code = r[col['StoreCodeBSS']]
         if pd.isna(code): continue
@@ -332,7 +363,13 @@ def scan_and_convert(raw_dir, data_dir):
         except Exception as e:
             # One month's workbook having an unexpected/broken layout shouldn't
             # stop every other month from being processed and committed.
-            print(f'  ❌ {month_str}: failed to convert ({e}) — skipped, other months continue.')
+            # Print the FULL traceback, not just str(e) — some exceptions
+            # (e.g. KeyError(None)) stringify to something unhelpful like
+            # "None", which hides the real cause and file/line it happened at.
+            import traceback
+            print(f'  ❌ {month_str}: failed to convert — skipped, other months continue.')
+            print(f'     Exception type: {type(e).__name__}')
+            traceback.print_exc()
 
     # Refresh manifest.json with every JSON file present in data_dir
     all_months = sorted(set(
