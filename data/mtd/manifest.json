@@ -1,14 +1,14 @@
 {
   "mobile": {
-    "date": "2026-08-10",
-    "dateLabel": "10 أغسطس 2026",
-    "file": "mobile-2026-08-10.json",
+    "date": "2026-08-12",
+    "dateLabel": "12 أغسطس 2026",
+    "file": "mobile-2026-08-12.json",
     "stores": 262
   },
   "wallet": {
-    "date": "2026-08-10",
-    "dateLabel": "10 أغسطس 2026",
-    "file": "wallet-2026-08-10.json",
+    "date": "2026-08-12",
+    "dateLabel": "12 أغسطس 2026",
+    "file": "wallet-2026-08-12.json",
     "stores": 741
   }
 }
